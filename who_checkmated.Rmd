@@ -1,0 +1,378 @@
+---
+title: "Who Checkmated?"
+subtitle: "Predicting the winner of a chess game"
+author: "Maeva Assi"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Packages
+library(tidyverse)
+library(ggplot2)
+library(openintro)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(pROC)
+library(randomForest)
+
+# Downloads the picture of a chess board
+figure_filename1 <- "checkmate.png"
+
+figure_url1 <- "https://www.tapsmart.com/wp-content/uploads/2020/12/chess-header.jpg"
+download.file(
+  url = figure_url1,
+  destfile = figure_filename1,
+  mode = "wb"
+)
+
+# Downloads the picture of a chess board
+figure_filename2 <- "chess_board_header.png"
+figure_url2 <- "https://chessbazaar.gumlet.io/media/catalog/product/y/y/yy.jpg"
+download.file(
+  url = figure_url2,
+  destfile = figure_filename2,
+  mode = "wb"
+)
+
+```
+
+# Introduction:
+
+
+
+In chess, the player with the light-colored pieces is referred to as "White" and the player with the dark-colored pieces is referred to as "Black". White moves first, after which players alternate turns.\
+Each player starts with sixteen pieces: one King, one Queen, two Rooks, two Knights, two Bishops, and eight Pawns. The main point of chess is to **checkmate the opponent's King**.\
+
+**Checkmate** (often shortened to mate) means **attacking the King so that it cannot escape capture**, thus ending the game.\
+The King is never actually captured – a player loses as soon as their King is checkmated.\
+A game also ends if a player resigns or forfeits, or if time runs out for one of the players but today's article will focus on games ending in **checkmates** only.\
+![*A chess board.*](chess_board_header.png)\
+
+
+The [Chess Game Dataset](https://github.com/rfordatascience/tidytuesday/blob/main/data/2024/2024-10-01/readme.md "Chess Game Dataset via GitHub") is a set of just over 20,000 games collected from a selection of users from the free open source chess server **Lichess.org** via [Kaggle by Mitchell J.](https://www.kaggle.com/datasets/datasnaek/chess/data "Chess Game Dataset via Kaggle by Mitchell J.").\
+The set contains the 16 following variables for each game:
+
+- `game_id`: Game ID;
+- `rated`:	Rated (T/F), which is whether the game was a rated game (which will affect your rating in the platform), or a "casual" game.
+- `start_time`: Start time;
+- `end_time`: End time;
+- `turns`: Number of turns;
+- `victory_status`: Game status (mate, resign, draw, out of time);
+- `winner`: Winner (white, black, draw);
+- `time_increment`: Time increment;
+- `white_id`:	White player id;
+- `white_rating`:	White player rating;
+- `black_id`:	Black player id;
+- `black_rating`:	Black player rating;
+- `moves`: All Moves in Standard Chess Notation;
+- `opening_eco`: Opening Eco (Standardised Code for any given opening, list [here](https://www.365chess.com/eco.php))
+- `opening_name`: Opening Name; and
+- `opening_ply`: Number of moves in the opening phase.
+
+Because chess is an abstract strategy game which involves no hidden information and no elements of chance, I'm curious as to what allows a player to win as black or white.
+**Question**: Is there a relationship between player level and victory by checkmate? Can we predict if a game resulted in a black or white winner depending on the player level?
+
+
+# I. Data Import and Wrangling
+I imported the data directly from GitHub.
+```{r message=FALSE, warning=FALSE}
+# Importing the data
+chess <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2024/2024-10-01/chess.csv')
+
+# Looking at the data
+glimpse(chess)
+```
+
+As stated in the introduction, the dataset has 16 variables, however I only need the following for my project:
+
+- `victory_status`: Game status (mate, resign, draw, out of time);
+- `winner`: Winner (white, black, draw);
+- `white_rating`:	White player rating; and
+- `black_rating`:	Black player rating.
+
+I'm also only interested in games ending in **checkmates**, so I filtered for those and then select my variables of interest.\
+I didn't select the `victory_status` variable since it only takes "mate" as a value after filtering, making it redundant.\
+As a reminder of the game rules, a checkmate cannot be a draw as it must result in a white or black winner, so I didn't need to filter out "draw" from the `winner` variable after filtering the `victory_status`.
+```{r}
+chess_clean <- chess |>
+  # Filtering for the relevant victory status
+  filter(victory_status == "mate"
+         ) |>
+  # Selecting the variables of interest
+  select(winner,
+         white_rating,
+         black_rating
+         )
+
+glimpse(chess_clean)
+```
+Filtering narrowed my data down to 6,325 games.
+
+Next, since both the white and black player ratings are reported for each game, I created two variables that report the rating of the winning player and of the losing player using a logical vector. These variables will be useful when doing data visualizations.
+I also created a third variable from those two new ones: the difference
+```{r}
+# Creating a new variable that reports the rating of the winner
+chess_clean <- chess_clean |>
+  mutate(winner_rating = if_else(winner == "white", # condition: if White is the winner
+                          white_rating, # if true, winner rating = white player rating
+                          black_rating # if false, winner rating = black player rating
+                          ),
+         .after = winner
+  ) |>
+  mutate(loser_rating = if_else(winner != "white", # condition: if White is not the winner
+                          white_rating, # if true, loser rating = white player rating
+                          black_rating # if false, loser rating = black player rating
+                          ),
+         rating_difference = winner_rating - loser_rating,
+         .after = winner_rating
+  )
+
+glimpse(chess_clean)
+```
+\
+Lastly, I converted the `winner` variable into a factor for modeling.\
+```{r}
+chess_clean <- chess_clean |>
+  # Converting variables to factors
+  mutate(winner = factor(winner)
+         ) |>
+  # Releveling the winner levels
+  mutate(winner =  fct_relevel(winner,
+                                 "white",
+                                 "black"
+                               )
+         )
+  
+glimpse(chess_clean)
+```
+
+## Exploring the Data
+I also created a separate object to have information on the summary statistics of player_rating by winner.
+```{r message=FALSE, warning=FALSE}
+# Selecting the variables of interest
+chess_summary <- chess_clean |>
+  summarize(winner_n = n(),
+            avg_winner_rating = mean(winner_rating),
+            median_winner_rating = median(winner_rating),
+            max_winner_rating = max(winner_rating),
+            min_winner_rating = min(winner_rating),
+            .by = winner)
+chess_summary
+```
+Player ratings range from 784 for white winners and 796 for black winners to 2,621 for both.
+The average player rating for black winners is 1,585.97, which is higher than the average player rating for white winners of 1,576.5 by `r round(1585.973-1576.498, digits = 2)`.
+
+I was also curious as to what color did the top 10 rated players won as, and found out 6 of the top 10 rated players won as white players:
+```{r}
+chess_clean |>
+  slice_max(winner_rating, n = 10)
+```
+ 
+# II. Data visualization:
+First, I'd like to explore the possible differences between white and black winners.\
+Based on the data, most checkmates were delivered by **white players** (3,344 versus 2981 for checkmates delivered by black players). They represent **`r round(3344/6325*100, digits = 2)`%** of all victories by checkmate out of 6,325 games.
+```{r echo=FALSE, message=TRUE}
+chess_clean |>
+  ggplot(
+    aes(x = (winner),
+        fill = winner
+        )
+    ) +
+  scale_fill_manual(values = c("lightyellow","antiquewhite4")) +
+  geom_bar(colour = "black") +
+  labs(
+    title = "Distribution of Winners by Checkmate",
+    x = "Winner",
+    y = "Number of winners",
+    fill = "Winner"
+    )
+```
+\
+Now incorporating player rating, a boxplot of the winner rating by their chess color shows there is little difference between the player rating of white vs black winners.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+chess_clean |>
+  ggplot(
+    aes(x = winner,
+        y = winner_rating,
+        fill = winner
+        )
+    ) +
+  scale_fill_manual(values = c("lightyellow","antiquewhite4")) +
+  geom_boxplot() +
+  labs(
+    title = "Player rating of white vs black winners",
+    x = "Winner",
+    y = "Player Rating",
+    fill = "Winner"
+    )
+```
+\
+Black winners have a median player rating of 1556, slightly higher than white winners 1544.5. Both have low outliers, at 784 for white winners and 786 for black winners, and high outliers up to 2,621.\
+Some of these high outliers are caused by the same players, though white winners have a higher number of high outliers, which indicates that some of the players with the highest ratings won more as white than as black, matching the fact that 6 of the top 10 rated players won as white players.
+
+
+Plotting the winner's rating and the difference between the winner and loser player rating shows there is a positive moderate linear relationship between the winner's rating and how overleveled or underleveled they were compared to their opponent.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+chess_clean |> 
+  ggplot(
+    mapping = aes(x = winner_rating,
+                  y = rating_difference
+                  )
+    ) +
+  geom_point(aes(color = winner,
+                 shape = winner
+                 )
+             ) +
+  scale_color_manual(values = c("lightyellow","antiquewhite4")) +
+  geom_smooth(method = "lm") +
+  labs(
+    title = "Winners by Black vs White rating",
+    x = "Winner rating",
+    y = "Difference between Winner & Loser rating"
+    )
+```
+
+# III. Modeling:
+Now that we see that may be some association between victory and player rating, let's model the data.
+
+Decision trees were likely to overfit with my data, so I selected a random forest model. 
+
+First, I split my data into 80% training and 20% testing data.
+
+```{r}
+# To ensure reproducibility
+set.seed(44456)
+
+# Split data into training and test dataset
+train_indexes <- as.vector(createDataPartition(chess_clean$winner, p = 0.8, list = FALSE))
+chess_train <- slice(chess_clean, train_indexes)
+chess_test <- slice(chess_clean, -train_indexes)
+
+# Select features and fit the model
+rf_model <- randomForest(winner ~ ., data = chess_train)
+
+# Inspect the model
+rf_model 
+```
+
+The out-of-bag error estimate was 3.22%. This means that `r 100-3.22`% of the out-of-bag observations were classified correctly.
+
+- 2,600 white winners were correctly labeled as white (These are true negatives.)
+- 76 white winners were incorrectly labeled as black (This is a false positive.)
+- 87 black winners were incorrect labeled as white. (This is a false negative.)
+- 2,298 black winners were correctly labeled as black (These are true positives.)
+
+```{r include=FALSE}
+oob_err_df <- as_tibble(rf_model$err.rate) |>
+  # Add a number of trees variable (this is simply the row number)
+  mutate(num_trees = row_number()) |>
+  # Convert to long format
+  pivot_longer(cols = -num_trees, names_to = "error_type", values_to =
+"error_rate") |>
+  mutate(
+    # Use human readable labels
+    error_type = fct_recode(error_type,
+      "Overall" = "OOB",
+      "White winner" = "white",
+      "Black winner" = "black"
+),
+    # Calculate accuracy as well
+    accuracy = 1 - error_rate
+  )
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+oob_err_df |>
+  mutate(error_type_ordered = fct_reorder2(error_type,
+                                           num_trees,
+                                           accuracy
+                                           )
+         ) |>
+  ggplot(aes(x = num_trees,
+             y = accuracy,
+             color = error_type_ordered
+             )
+         ) +
+    geom_line() +
+    labs(title = "Out-of-bag accuracy as a function of the number of trees",
+         x = "# of trees",
+         y = "Out-of-bag accuracy",
+         color = "Class") +
+    theme_classic()
+```
+
+The error rate sort of stabilizes at around 170 trees.\
+When tuning the mtry, I set the number of trees to 250 which is reasonably large.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Define tuning grid: try several values of mtry
+tune_grid <- expand.grid(mtry = 1:10)
+
+# Set up the training function
+ctrl <- trainControl(method = "oob") # Use OOB estimate for training evaluation
+
+# Fit the randomForest using different mtry values
+set.seed(345)
+rf_tuned <- train(
+  winner ~ .,
+  data = chess_train,
+  method = "rf",
+  trControl = ctrl,
+  tuneGrid = tune_grid,
+  ntree = 250 # Set this reasonably large since we are tuning mtry
+)
+
+print(rf_tuned)
+
+plot(rf_tuned)
+```
+
+Using 6 features at each split gives the best out-of-bag accuracy.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(5632)
+rf_model_final <- randomForest(winner ~ .,
+                               data = chess_train,
+                               mtry = rf_tuned$finalModel$tuneValue$mtry,
+                               ntree = 250)
+# Calculate the predicted values
+predicted_test <- predict(rf_model_final,
+                          newdata = chess_test,
+                          type = "response")
+# Calculate the predicted probabilites
+predicted_prob_test <- predict(rf_model_final,
+                               newdata = chess_test, type="prob")
+# Create the ROC object
+roc_obj <- roc(response = chess_test$winner,
+               predictor = predicted_prob_test[,2],
+               levels = c("white", "black"))
+# Plot the ROC curve
+plot(roc_obj, print.thres = "best", print.auc = TRUE)
+```
+
+The random forest has a high accuracy with an area under the curve of `r round(auc(roc_obj), digits = 3)`.
+
+# Conclusion:
+There is a positive moderate linear relationship between player rating and winning by checkmate, and using 6 features at each split of trees in a random forest model gives the best out-of-bag accuracy.
+
+Possible next steps would be to try to predict if a game resulted in a black or white winner depending on the opening move, or whether the game was a rated game or a casual game.
+
+# References:
+
+### Sources:
+
+- Chess Game Dataset:
+  - via GitHub: https://github.com/rfordatascience/tidytuesday/blob/main/data/2024/2024-10-01/readme.md;
+  - via Kaggle by Mitchell J: https://www.kaggle.com/datasets/datasnaek/chess/data
+- "Checkmate", Wikipedia: https://en.wikipedia.org/wiki/Checkmate
+
+### Images:
+
+- Chess board: <https://chessbazaar.gumlet.io/media/catalog/product/y/y/yy.jpg>
+- White King knocking down Black King: <https://www.tapsmart.com/wp-content/uploads/2020/12/chess-header.jpg>

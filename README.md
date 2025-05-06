@@ -1,12 +1,14 @@
 # Checkmate Predictions
 
-Many factors influence the outcome of a pregnancy and the baby’s birth weight. This project focuses on the relationship between gestation time and birth weight and then whether smoking affects the gestation time and the birth weight using data about 1,236 male’s birth weight, and gestational period collected as part of the Child Health and Development Studies in 1961 and 1962.
-Information about the baby’s parents — age, education, height, weight, and whether the mother smoked is also recorded. The original dataset has 22 variables, but the project will focus on three variables :
+Chess is an abstract strategy game which involves no hidden information and no elements of chance. This project tries to predict if a game resulted in a black or white winner depending on the player level using a Chess Game Dataset with just over 20,000 games collected from a selection of users from the free open source chess server Lichess.org.
+The original dataset has 16 variables, but the project will focus on four variables :
 
-- The length of gestation in days;
-- The birth weight in ounces;
-- Whether the mother smoked or not.
+- - `rated`:	Rated (T/F), which is whether the game was a rated game (which will affect your rating in the platform), or a casual game.
+- `victory_status`: Game status (mate, resign, draw, out of time);
+- Winner (white, black);
+- White player rating; and
+- Black player rating.
 
 Links:\
-[Read the blog post](https://maevassi.github.io/mini-project1/maeva_assi_cigarettes_and_contractions.html) \
-[Download the .Rmd file](https://maevassi.github.io/mini-project1/maeva_assi_cigarettes_and_contractions.Rmd)
+[Read the blog post](https://maevassi.github.io/final-project/maeva_assi_who_checkmated.html) \
+[Download the .Rmd file](https://maevassi.github.io/final-project/maeva_assi_who_checkmated.Rmd)

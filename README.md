@@ -10,4 +10,5 @@ The original dataset has 16 variables, but the project will focus on four variab
 
 Links:\
 [Read the blog post](https://maevassi.github.io/final-project/maeva_assi_who_checkmated.html) \
+[Read the slides pdf](https://maevassi.github.io/final-project/who_wheckmated_slides.pdf)\
 [Download the .Rmd file](https://maevassi.github.io/final-project/maeva_assi_who_checkmated.Rmd)
